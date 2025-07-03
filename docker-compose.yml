@@ -1,10 +1,8 @@
-
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: php_app
     ports:
       - "8020:80"
     env_file:
@@ -12,6 +10,8 @@ services:
     depends_on:
       - db
       - memcached
+    networks:
+      - backend
 
   db:
     image: mysql:8.0
@@ -21,6 +21,8 @@ services:
       - .env
     volumes:
       - db_data:/var/lib/mysql
+    networks:
+      - backend
 
   memcached:
     image: memcached:latest
@@ -28,6 +30,8 @@ services:
     restart: always
     ports:
       - "11211:11211"
+    networks:
+      - backend
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
@@ -37,6 +41,12 @@ services:
       - "8087:80"
     environment:
       PMA_HOST: db
+    networks:
+      - backend
 
 volumes:
   db_data:
+
+networks:
+  backend:
+    driver: bridge
