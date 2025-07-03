@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      db:
+      mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
+          MYSQL_ROOT_PASSWORD: root   # Mot de passe root fixe pour démarrage
           MYSQL_DATABASE: appdb
         ports:
           - 3306:3306
@@ -44,7 +44,7 @@ jobs:
           cat > .env <<EOF
 DB_HOST=127.0.0.1
 DB_USER=root
-DB_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
+DB_PASSWORD=root
 DB_NAME=appdb
 MEMCACHED_HOST=127.0.0.1
 MEMCACHED_PORT=11211
@@ -56,13 +56,17 @@ EOF
       - name: Wait for MySQL to be healthy
         run: |
           until mysqladmin ping -h 127.0.0.1 --silent; do
-            echo "Waiting for MySQL…"
+            echo "⏳ Waiting for MySQL…"
             sleep 3
           done
 
-      - name: Debug DB startup (on failure)
+      - name: Check MySQL service logs (debug)
         if: failure()
-        run: docker logs ${{ job.services.db.id }} --tail 50
+        run: |
+          echo "→ Conteneurs Docker:"
+          docker ps -a --filter name=mysql
+          echo "→ Logs MySQL:"
+          docker logs mysql
 
       - name: Run PHPUnit under phpdbg
         run: phpdbg -qrr vendor/bin/phpunit --coverage-text
@@ -75,8 +79,7 @@ EOF
       IMAGE_NAME: crud_app
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v2
 
       - name: Set up PHP for build
         uses: shivammathur/setup-php@v2
@@ -84,20 +87,20 @@ EOF
           php-version: '8.0'
           extensions: mbstring, pdo_mysql, mysqli, zip, memcached
 
-      - name: Install PHP dependencies
+      - name: Install dependencies
         run: composer install --no-interaction --optimize-autoloader
 
-      - name: Build and tag Docker image
+      - name: Build Docker image
         run: docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:latest .
 
-      - name: Log in to Azure Container Registry
+      - name: Log in to ACR
         uses: azure/docker-login@v1
         with:
           login-server: ${{ secrets.AZURE_ACR }}.azurecr.io
           username: ${{ secrets.AZURE_SERVICE_PRINCIPAL }}
           password: ${{ secrets.AZURE_SERVICE_PRINCIPAL_PASSWORD }}
 
-      - name: Push Docker image to ACR
+      - name: Push image to ACR
         run: docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest
 
   deploy-to-azure:
@@ -105,13 +108,11 @@ EOF
     runs-on: ubuntu-latest
 
     steps:
-      - name: Azure Login
-        uses: azure/login@v1
+      - uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to Azure Web App for Containers
-        uses: azure/webapps-deploy@v2
+      - uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
           images: ${{ secrets.AZURE_ACR }}.azurecr.io/crud_app:latest
