@@ -1,0 +1,60 @@
+# .github/workflows/ci-and-deploy.yml
+name: CI & Deploy to Azure
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      ACR_NAME: ${{ secrets.AZURE_ACR }}            # ex: myregistry
+      ACR_LOGIN_SERVER: ${{ secrets.AZURE_ACR }}.azurecr.io
+      IMAGE_NAME: crud_app
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          extensions: mbstring, pdo_mysql, mysqli, zip, memcached
+
+      - name: Install dependencies
+        run: |
+          composer install --no-interaction --optimize-autoloader
+
+      - name: Run PHPUnit (without coverage)
+        run: vendor/bin/phpunit
+
+      - name: Build Docker image
+        run: |
+          docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:latest .
+
+      - name: Log in to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: $ACR_LOGIN_SERVER
+          username: ${{ secrets.AZURE_SERVICE_PRINCIPAL }}
+          password: ${{ secrets.AZURE_SERVICE_PRINCIPAL_PASSWORD }}
+
+      - name: Push image to ACR
+        run: |
+          docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest
+
+  deploy-to-azure:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}      # JSON output of `az ad sp create-for-rbac`
+
+      - name: Deploy to Azure Web App for Containers
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}   # nom de votre Web App
+          images: ${{ secrets.AZURE_ACR }}.azurecr.io/crud_app:latest
