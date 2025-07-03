@@ -10,11 +10,13 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    # Démarrage des services MySQL et Memcached pour les tests
     services:
       db:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          # fallback à 'root' si le secret n'est pas défini
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
           MYSQL_DATABASE: appdb
         ports:
           - 3306:3306
@@ -32,13 +34,14 @@ jobs:
     env:
       DB_HOST: 127.0.0.1
       DB_USER: root
-      DB_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+      DB_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
       DB_NAME: appdb
       MEMCACHED_HOST: 127.0.0.1
       MEMCACHED_PORT: 11211
 
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -51,21 +54,25 @@ jobs:
           cat > .env <<EOF
           DB_HOST=127.0.0.1
           DB_USER=root
-          DB_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+          DB_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
           DB_NAME=appdb
           MEMCACHED_HOST=127.0.0.1
           MEMCACHED_PORT=11211
           EOF
 
-      - name: Install dependencies
+      - name: Install PHP dependencies
         run: composer install --no-interaction --optimize-autoloader
 
-      - name: Wait for DB to be healthy
+      - name: Wait for MySQL to be healthy
         run: |
           until mysqladmin ping -h 127.0.0.1 --silent; do
-            echo "Waiting for database…"
+            echo "Waiting for MySQL…"
             sleep 3
           done
+
+      - name: Debug DB startup (on failure)
+        if: failure()
+        run: docker logs ${{ job.services.db.id }} --tail 50
 
       - name: Run PHPUnit under phpdbg
         run: phpdbg -qrr vendor/bin/phpunit --coverage-text
@@ -74,12 +81,12 @@ jobs:
     needs: build-and-test
     runs-on: ubuntu-latest
     env:
-      ACR_NAME: ${{ secrets.AZURE_ACR }}
       ACR_LOGIN_SERVER: ${{ secrets.AZURE_ACR }}.azurecr.io
       IMAGE_NAME: crud_app
 
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v2
 
       - name: Set up PHP for build
         uses: shivammathur/setup-php@v2
@@ -87,23 +94,21 @@ jobs:
           php-version: '8.0'
           extensions: mbstring, pdo_mysql, mysqli, zip, memcached
 
-      - name: Install dependencies
+      - name: Install PHP dependencies
         run: composer install --no-interaction --optimize-autoloader
 
-      - name: Build Docker image
-        run: |
-          docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:latest .
+      - name: Build and tag Docker image
+        run: docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:latest .
 
-      - name: Log in to ACR
+      - name: Log in to Azure Container Registry
         uses: azure/docker-login@v1
         with:
-          login-server: $ACR_LOGIN_SERVER
+          login-server: ${{ secrets.AZURE_ACR }}.azurecr.io
           username: ${{ secrets.AZURE_SERVICE_PRINCIPAL }}
           password: ${{ secrets.AZURE_SERVICE_PRINCIPAL_PASSWORD }}
 
-      - name: Push image to ACR
-        run: |
-          docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest
+      - name: Push Docker image to ACR
+        run: docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest
 
   deploy-to-azure:
     needs: build-and-push
