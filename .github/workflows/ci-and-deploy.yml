@@ -16,19 +16,27 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: appdb
-        # publication de port pour permettre mysqladmin ping → localhost:3306
-        ports:
-          - 3306:3306
+        # pas de ports: le runner peut joindre mysql via le hostname "mysql" en interne
         options: >-
-          --health-cmd "mysqladmin ping --silent"
+          --health-cmd "mysqladmin ping -h mysql --silent"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 3
 
       memcached:
         image: memcached:latest
-        ports:
-          - 11211:11211
+        # pareil, pas de ports externes
+        options: >-
+          # pas de healthcheck nécessaire pour memcached
+
+    env:
+      # on pointe vers le service mysql par son nom
+      DB_HOST: mysql
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: appdb
+      MEMCACHED_HOST: memcached
+      MEMCACHED_PORT: 11211
 
     steps:
       - name: Checkout code
@@ -43,12 +51,12 @@ jobs:
       - name: Prepare .env for tests
         run: |
           cat > .env <<EOF
-DB_HOST=127.0.0.1
-DB_USER=root
-DB_PASSWORD=root
-DB_NAME=appdb
-MEMCACHED_HOST=127.0.0.1
-MEMCACHED_PORT=11211
+DB_HOST=${{ env.DB_HOST }}
+DB_USER=${{ env.DB_USER }}
+DB_PASSWORD=${{ env.DB_PASSWORD }}
+DB_NAME=${{ env.DB_NAME }}
+MEMCACHED_HOST=${{ env.MEMCACHED_HOST }}
+MEMCACHED_PORT=${{ env.MEMCACHED_PORT }}
 EOF
 
       - name: Install PHP dependencies
@@ -56,8 +64,8 @@ EOF
 
       - name: Wait for MySQL to be healthy
         run: |
-          until mysqladmin ping -h 127.0.0.1 --silent; do
-            echo "⏳ Waiting for MySQL…"
+          until mysqladmin ping -h mysql --silent; do
+            echo "⏳ Waiting for MySQL service…"
             sleep 3
           done
 
@@ -81,21 +89,34 @@ EOF
           php-version: '8.0'
           extensions: mbstring, pdo_mysql, mysqli, zip, memcached
 
-      - name: Install PHP dependencies
+      - name: Install dependencies
         run: composer install --no-interaction --optimize-autoloader
 
-      - name: Build and tag Docker image
+      - name: Build Docker image
         run: docker build -t $ACR_LOGIN_SERVER/$IMAGE_NAME:latest .
 
-      - name: Log in to Azure Container Registry
+      - name: Log in to ACR
         uses: azure/docker-login@v1
         with:
           login-server: ${{ secrets.AZURE_ACR }}.azurecr.io
           username: ${{ secrets.AZURE_SERVICE_PRINCIPAL }}
           password: ${{ secrets.AZURE_SERVICE_PRINCIPAL_PASSWORD }}
 
-      - name: Push Docker image to ACR
+      - name: Push image to ACR
         run: docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest
 
   deploy-to-azure:
-    needs: build-and-p
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Web App for Containers
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          images: ${{ secrets.AZURE_ACR }}.azurecr.io/crud_app:latest
