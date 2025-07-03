@@ -16,15 +16,16 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: appdb
-        # expose port so runner can reach MySQL on localhost:3306
-        ports:
-          - 3306:3306
+        # Pas de ports exposés : on se connecte via le hostname "mysql"
+        options: >-
+          --health-cmd "mysqladmin ping -h mysql --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
 
       memcached:
         image: memcached:latest
-        # expose port so runner can reach Memcached on localhost:11211
-        ports:
-          - 11211:11211
+        # Pas de healthcheck ni de ports nécessaires
 
     steps:
       - name: Checkout code
@@ -36,41 +37,39 @@ jobs:
           php-version: '8.0'
           extensions: mbstring, pdo_mysql, mysqli, zip, memcached
 
-      - name: Prepare .env for tests
+      - name: Generate .env for tests
         run: |
           cat > .env <<EOF
-DB_HOST=127.0.0.1:3306
+DB_HOST=mysql
 DB_USER=root
 DB_PASSWORD=root
 DB_NAME=appdb
-MEMCACHED_HOST=127.0.0.1
+MEMCACHED_HOST=memcached
 MEMCACHED_PORT=11211
 EOF
 
-      - name: Install PHP dependencies
+      - name: Install dependencies
         run: composer install --no-interaction --optimize-autoloader
 
-      - name: Wait for MySQL to be ready
+      - name: Wait for MySQL to be healthy
         run: |
-          until mysqladmin ping -h 127.0.0.1 --silent; do
-            echo "⏳ Waiting for MySQL…"
+          echo "⏳ Waiting for MySQL service…"
+          until mysqladmin ping -h mysql --silent; do
             sleep 3
           done
 
-      - name: Run PHPUnit under phpdbg
+      - name: Run PHPUnit (with coverage)
         run: phpdbg -qrr vendor/bin/phpunit --coverage-text
 
   build-and-push:
     needs: build-and-test
     runs-on: ubuntu-latest
-
     env:
       ACR_LOGIN_SERVER: ${{ secrets.AZURE_ACR }}.azurecr.io
       IMAGE_NAME: crud_app
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v2
 
       - name: Set up PHP for build
         uses: shivammathur/setup-php@v2
@@ -99,13 +98,11 @@ EOF
     runs-on: ubuntu-latest
 
     steps:
-      - name: Azure Login
-        uses: azure/login@v1
+      - uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Deploy to Azure Web App for Containers
-        uses: azure/webapps-deploy@v2
+      - uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
           images: ${{ secrets.AZURE_ACR }}.azurecr.io/crud_app:latest
