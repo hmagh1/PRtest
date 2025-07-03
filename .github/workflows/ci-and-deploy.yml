@@ -10,12 +10,10 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
-    # Démarrage des services MySQL et Memcached pour les tests
     services:
       db:
         image: mysql:8.0
         env:
-          # fallback à 'root' si le secret n'est pas défini
           MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
           MYSQL_DATABASE: appdb
         ports:
@@ -31,14 +29,6 @@ jobs:
         ports:
           - 11211:11211
 
-    env:
-      DB_HOST: 127.0.0.1
-      DB_USER: root
-      DB_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
-      DB_NAME: appdb
-      MEMCACHED_HOST: 127.0.0.1
-      MEMCACHED_PORT: 11211
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
@@ -52,13 +42,13 @@ jobs:
       - name: Prepare .env for tests
         run: |
           cat > .env <<EOF
-          DB_HOST=127.0.0.1
-          DB_USER=root
-          DB_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
-          DB_NAME=appdb
-          MEMCACHED_HOST=127.0.0.1
-          MEMCACHED_PORT=11211
-          EOF
+DB_HOST=127.0.0.1
+DB_USER=root
+DB_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD || 'root' }}
+DB_NAME=appdb
+MEMCACHED_HOST=127.0.0.1
+MEMCACHED_PORT=11211
+EOF
 
       - name: Install PHP dependencies
         run: composer install --no-interaction --optimize-autoloader
