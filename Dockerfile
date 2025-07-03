@@ -16,8 +16,8 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 # 3. Définir le répertoire de travail
 WORKDIR /var/www/html
 
-# 4. Copier les fichiers Composer et installer les dépendances
-COPY composer.json composer.lock ./
+# 4. Copier seulement composer.json pour installer les dépendances
+COPY composer.json ./
 RUN composer install --no-interaction --optimize-autoloader
 
 # 5. Installer les extensions PHP
@@ -30,8 +30,6 @@ COPY src/ ./
 
 # 7. Activer mod_rewrite et configurer DocumentRoot
 RUN a2enmod rewrite \
-  && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf \
-  && rm -rf /var/lib/apt/lists/*
+  && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf
 
-# 8. Variable d’environnement Apache
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
