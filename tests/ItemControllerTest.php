@@ -1,71 +1,66 @@
 <?php
-class ItemController {
-    private \PDO $db;
-    private \Memcached $cache;
+use PHPUnit\Framework\TestCase;
 
-    public function __construct() {
+require __DIR__ . '/bootstrap.php';
+
+class ItemControllerTest extends TestCase {
+    private static ItemController $controller;
+
+    public static function setUpBeforeClass(): void {
         global $pdo, $memcached;
-        $this->db    = $pdo;
-        $this->cache = $memcached;
-    }
-
-    public function getAll(): void {
-        $cacheKey = 'items_all';
-        $items = $this->cache->get($cacheKey);
-        if ($items === false) {
-            $stmt = $this->db->query('SELECT * FROM items');
-            $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            $this->cache->set($cacheKey, $items, 60);
-        }
-        echo json_encode($items);
-    }
-
-    public function get(int $id): void {
-        $cacheKey = 'item_' . $id;
-        $item = $this->cache->get($cacheKey);
-        if ($item === false) {
-            $stmt = $this->db->prepare('SELECT * FROM items WHERE id = :id');
-            $stmt->execute(['id' => $id]);
-            $item = $stmt->fetch(PDO::FETCH_ASSOC);
-            $this->cache->set($cacheKey, $item, 60);
-        }
-        echo json_encode($item);
-    }
-
-    public function create(): void {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $stmt = $this->db->prepare(
-            'INSERT INTO items (name, description) VALUES (:name, :description)'
+        // Créer la table en mémoire
+        $pdo->exec(<<<'SQL'
+CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    description TEXT
+)
+SQL
         );
-        $stmt->execute([
-            'name'        => $data['name'],
-            'description' => $data['description']
-        ]);
-        $id = $this->db->lastInsertId();
-        $this->cache->delete('items_all');
-        echo json_encode(['id' => $id]);
+        // Vider le cache
+        $memcached->flush();
+        self::$controller = new ItemController();
     }
 
-    public function update(int $id): void {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $stmt = $this->db->prepare(
-            'UPDATE items SET name = :name, description = :description WHERE id = :id'
-        );
-        $stmt->execute([
-            'name'        => $data['name'],
-            'description' => $data['description'],
-            'id'          => $id
-        ]);
-        $this->cache->delete('items_all');
-        $this->cache->delete('item_' . $id);
-        echo json_encode(['success' => true]);
+    public function testCreateGetDelete(): void {
+        $data = ['name' => 'Test', 'description' => 'Desc'];
+        file_put_contents('php://input', json_encode($data));
+
+        // create
+        ob_start();
+        self::$controller->create();
+        $out = json_decode(ob_get_clean(), true);
+        $this->assertArrayHasKey('id', $out);
+        $id = $out['id'];
+
+        // get
+        ob_start();
+        self::$controller->get($id);
+        $item = json_decode(ob_get_clean(), true);
+        $this->assertEquals('Test', $item['name']);
+
+        // delete
+        ob_start();
+        self::$controller->delete($id);
+        $del = json_decode(ob_get_clean(), true);
+        $this->assertTrue($del['success']);
     }
 
-    public function delete(int $id): void {
-        $stmt = $this->db->prepare('DELETE FROM items WHERE id = :id');
-        $stmt->execute(['id' => $id]);
-        $this->cache->delete('items_all');
-        $this->cache->delete('item_' . $id);
-        echo json_encode(['success' => true]);
+    public function testUpdate(): void {
+        global $pdo;
+        $pdo->exec("INSERT INTO items (name, description) VALUES ('Old','OldDesc')");
+        $id = $pdo->lastInsertId();
+
+        $upd = ['name'=>'New','description'=>'NewDesc'];
+        file_put_contents('php://input', json_encode($upd));
+
+        ob_start();
+        self::$controller->update($id);
+        ob_get_clean();
+
+        ob_start();
+        self::$controller->get($id);
+        $item = json_decode(ob_get_clean(), true);
+        $this->assertEquals('New', $item['name']);
     }
 }
