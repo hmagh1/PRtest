@@ -16,27 +16,15 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: appdb
-        # pas de ports: le runner peut joindre mysql via le hostname "mysql" en interne
-        options: >-
-          --health-cmd "mysqladmin ping -h mysql --silent"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 3
+        # expose port so runner can reach MySQL on localhost:3306
+        ports:
+          - 3306:3306
 
       memcached:
         image: memcached:latest
-        # pareil, pas de ports externes
-        options: >-
-          # pas de healthcheck nécessaire pour memcached
-
-    env:
-      # on pointe vers le service mysql par son nom
-      DB_HOST: mysql
-      DB_USER: root
-      DB_PASSWORD: root
-      DB_NAME: appdb
-      MEMCACHED_HOST: memcached
-      MEMCACHED_PORT: 11211
+        # expose port so runner can reach Memcached on localhost:11211
+        ports:
+          - 11211:11211
 
     steps:
       - name: Checkout code
@@ -51,21 +39,21 @@ jobs:
       - name: Prepare .env for tests
         run: |
           cat > .env <<EOF
-DB_HOST=${{ env.DB_HOST }}
-DB_USER=${{ env.DB_USER }}
-DB_PASSWORD=${{ env.DB_PASSWORD }}
-DB_NAME=${{ env.DB_NAME }}
-MEMCACHED_HOST=${{ env.MEMCACHED_HOST }}
-MEMCACHED_PORT=${{ env.MEMCACHED_PORT }}
+DB_HOST=127.0.0.1:3306
+DB_USER=root
+DB_PASSWORD=root
+DB_NAME=appdb
+MEMCACHED_HOST=127.0.0.1
+MEMCACHED_PORT=11211
 EOF
 
       - name: Install PHP dependencies
         run: composer install --no-interaction --optimize-autoloader
 
-      - name: Wait for MySQL to be healthy
+      - name: Wait for MySQL to be ready
         run: |
-          until mysqladmin ping -h mysql --silent; do
-            echo "⏳ Waiting for MySQL service…"
+          until mysqladmin ping -h 127.0.0.1 --silent; do
+            echo "⏳ Waiting for MySQL…"
             sleep 3
           done
 
@@ -75,6 +63,7 @@ EOF
   build-and-push:
     needs: build-and-test
     runs-on: ubuntu-latest
+
     env:
       ACR_LOGIN_SERVER: ${{ secrets.AZURE_ACR }}.azurecr.io
       IMAGE_NAME: crud_app
