@@ -1,0 +1,54 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: appdb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping --silent"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+      memcached:
+        image: memcached:latest
+        ports:
+          - 11211:11211
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          extensions: mbstring, pdo_mysql, memcached
+      - name: Install dependencies
+        run: composer install
+      - name: Run PHPUnit
+        run: |
+          vendor/bin/phpunit --coverage-text --coverage-clover=coverage.xml
+      - name: Build and push Docker images
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          AZURE_ACR: ${{ secrets.AZURE_ACR }}
+          AZURE_SERVICE_PRINCIPAL: ${{ secrets.AZURE_SERVICE_PRINCIPAL }}
+          AZURE_SERVICE_PRINCIPAL_PASSWORD: ${{ secrets.AZURE_SERVICE_PRINCIPAL_PASSWORD }}
+          AZURE_TENANT: ${{ secrets.AZURE_TENANT }}
+        run: |
+          echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin
+          docker build -t $DOCKERHUB_USERNAME/crud_app:latest .
+          docker push $DOCKERHUB_USERNAME/crud_app:latest
+          az login --service-principal -u $AZURE_SERVICE_PRINCIPAL -p $AZURE_SERVICE_PRINCIPAL_PASSWORD --tenant $AZURE_TENANT
+          az acr login --name $AZURE_ACR
+          docker tag $DOCKERHUB_USERNAME/crud_app:latest $AZURE_ACR.azurecr.io/crud_app:latest
+          docker push $AZURE_ACR.azurecr.io/crud_app:latest
