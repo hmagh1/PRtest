@@ -11,9 +11,12 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
-# Copier composer.json et composer.lock (si présent)
+# Copier composer.json, composer.lock et .env
 COPY composer.json ./
 COPY composer.lock ./
+COPY .env ./
+
+# Installer les dépendances PHP
 RUN composer install --no-interaction --optimize-autoloader
 
 # Installer les extensions PHP
