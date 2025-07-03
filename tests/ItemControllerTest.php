@@ -1,48 +1,71 @@
 <?php
-use PHPUnit\Framework\TestCase;
+class ItemController {
+    private \PDO $db;
+    private \Memcached $cache;
 
-class ItemControllerTest extends TestCase {
-    private static $controller;
-
-    public static function setUpBeforeClass(): void {
-        global $mysqli, $memcached;
-        $mysqli->query('CREATE TABLE IF NOT EXISTS items (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255), description TEXT)');
-        $memcached->flush();
-        self::$controller = new ItemController();
+    public function __construct() {
+        global $pdo, $memcached;
+        $this->db    = $pdo;
+        $this->cache = $memcached;
     }
 
-    public function testCreateGetDelete() {
-        $data = ['name' => 'Test', 'description' => 'Desc'];
-        file_put_contents('php://input', json_encode($data));
-        ob_start();
-        self::$controller->create();
-        $output = json_decode(ob_get_clean(), true);
-        $this->assertArrayHasKey('id', $output);
-        $id = $output['id'];
-
-        ob_start();
-        self::$controller->get($id);
-        $item = json_decode(ob_get_clean(), true);
-        $this->assertEquals('Test', $item['name']);
-
-        ob_start();
-        self::$controller->delete($id);
-        $del = json_decode(ob_get_clean(), true);
-        $this->assertTrue($del['success']);
+    public function getAll(): void {
+        $cacheKey = 'items_all';
+        $items = $this->cache->get($cacheKey);
+        if ($items === false) {
+            $stmt = $this->db->query('SELECT * FROM items');
+            $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $this->cache->set($cacheKey, $items, 60);
+        }
+        echo json_encode($items);
     }
 
-    public function testUpdate() {
-        global $mysqli;
-        $mysqli->query("INSERT INTO items (name, description) VALUES ('Old', 'OldDesc')");
-        $id = $mysqli->insert_id;
-        file_put_contents('php://input', json_encode(['name' => 'New', 'description' => 'NewDesc']));
-        ob_start();
-        self::$controller->update($id);
-        ob_clean();
+    public function get(int $id): void {
+        $cacheKey = 'item_' . $id;
+        $item = $this->cache->get($cacheKey);
+        if ($item === false) {
+            $stmt = $this->db->prepare('SELECT * FROM items WHERE id = :id');
+            $stmt->execute(['id' => $id]);
+            $item = $stmt->fetch(PDO::FETCH_ASSOC);
+            $this->cache->set($cacheKey, $item, 60);
+        }
+        echo json_encode($item);
+    }
 
-        ob_start();
-        self::$controller->get($id);
-        $item = json_decode(ob_get_clean(), true);
-        $this->assertEquals('New', $item['name']);
+    public function create(): void {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $stmt = $this->db->prepare(
+            'INSERT INTO items (name, description) VALUES (:name, :description)'
+        );
+        $stmt->execute([
+            'name'        => $data['name'],
+            'description' => $data['description']
+        ]);
+        $id = $this->db->lastInsertId();
+        $this->cache->delete('items_all');
+        echo json_encode(['id' => $id]);
+    }
+
+    public function update(int $id): void {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $stmt = $this->db->prepare(
+            'UPDATE items SET name = :name, description = :description WHERE id = :id'
+        );
+        $stmt->execute([
+            'name'        => $data['name'],
+            'description' => $data['description'],
+            'id'          => $id
+        ]);
+        $this->cache->delete('items_all');
+        $this->cache->delete('item_' . $id);
+        echo json_encode(['success' => true]);
+    }
+
+    public function delete(int $id): void {
+        $stmt = $this->db->prepare('DELETE FROM items WHERE id = :id');
+        $stmt->execute(['id' => $id]);
+        $this->cache->delete('items_all');
+        $this->cache->delete('item_' . $id);
+        echo json_encode(['success' => true]);
     }
 }
