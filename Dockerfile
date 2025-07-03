@@ -1,42 +1,43 @@
+# 1. Base image
 FROM php:8.0-apache
 
-# 1. Installer les dépendances système nécessaires
+# 2. Install system dependencies
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-       libzip-dev \
-       libmemcached-dev \
-       zlib1g-dev \
-       libsasl2-dev \
-       pkg-config \
-       unzip \
-       git \
-  && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends \
+      libzip-dev \
+      libmemcached-dev \
+      zlib1g-dev \
+      libsasl2-dev \
+      pkg-config \
+      unzip \
+      git \
+ && rm -rf /var/lib/apt/lists/*
 
-# 2. Installer Composer
+# 3. Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# 3. Définir le répertoire de travail
+# 4. Set working directory
 WORKDIR /var/www/html
 
-# 4. Copier les fichiers de configuration et d'environnement
+# 5. Copy Composer config and install PHP dependencies
 COPY composer.json composer.lock .env ./
-
-# 5. Installer les dépendances PHP via Composer
 RUN composer install --no-interaction --optimize-autoloader
 
-# 6. Installer les extensions PHP (PDO, MySQLi, zip) et Memcached
-RUN docker-php-ext-install pdo pdo_mysql mysqli zip \
-  && pecl install memcached \
-  && docker-php-ext-enable memcached
+# 6. Install PHP extensions (PDO MySQL, PDO SQLite, zip) and Memcached
+RUN docker-php-ext-install pdo pdo_mysql pdo_sqlite zip \
+ && pecl install memcached \
+ && docker-php-ext-enable memcached \
+ && rm -rf /var/lib/apt/lists/*
 
-# 7. Copier le code source, les tests et la config PHPUnit
+# 7. Copy application source, tests, and PHPUnit config
 COPY src/ ./src/
 COPY tests/ ./tests/
 COPY phpunit.xml ./
 
-# 8. Activer mod_rewrite et ajuster le DocumentRoot pour /public
+# 8. Enable Apache rewrite module and adjust DocumentRoot to /public
 RUN a2enmod rewrite \
-  && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf
+ && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf
 
-# 9. Définir la variable d'environnement pour Apache
+# 9. Expose port and set Apache env
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+EXPOSE 80
