@@ -1,6 +1,6 @@
 FROM php:8.0-apache
 
-# 1. Installer les dépendances pour pdo_mysql et memcached
+# 1. Installer les dépendances système
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        libzip-dev \
@@ -8,19 +8,30 @@ RUN apt-get update \
        zlib1g-dev \
        libsasl2-dev \
        pkg-config \
-  && docker-php-ext-install pdo pdo_mysql \
-  && pecl install memcached \
-  && docker-php-ext-enable memcached \
   && rm -rf /var/lib/apt/lists/*
 
-# 2. Copier le code source
-COPY src/ /var/www/html/
+# 2. Installer Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# 3. Activer mod_rewrite et configurer le DocumentRoot
-RUN a2enmod rewrite
+# 3. Définir le répertoire de travail
+WORKDIR /var/www/html
 
-# 4. Mettre à jour la variable d'environnement correctement
+# 4. Copier les fichiers Composer et installer les dépendances
+COPY composer.json composer.lock ./
+RUN composer install --no-interaction --optimize-autoloader
+
+# 5. Installer les extensions PHP
+RUN docker-php-ext-install pdo pdo_mysql \
+  && pecl install memcached \
+  && docker-php-ext-enable memcached
+
+# 6. Copier le code source
+COPY src/ ./
+
+# 7. Activer mod_rewrite et configurer DocumentRoot
+RUN a2enmod rewrite \
+  && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf \
+  && rm -rf /var/lib/apt/lists/*
+
+# 8. Variable d’environnement Apache
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-
-# 5. Adapter la configuration d'Apache pour pointer vers /public
-RUN sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/*.conf
